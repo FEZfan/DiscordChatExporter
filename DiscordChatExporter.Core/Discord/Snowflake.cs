@@ -11,6 +11,8 @@ public readonly partial record struct Snowflake(ulong Value)
             .FromUnixTimeMilliseconds((long)((Value >> 22) + 1420070400000UL))
             .ToLocalTime();
 
+    public ulong Timestamp() => (Value >> 22) + 1420070400000UL;
+
     [ExcludeFromCodeCoverage]
     public override string ToString() => Value.ToString(CultureInfo.InvariantCulture);
 }

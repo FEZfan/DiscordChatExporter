@@ -1,6 +1,8 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using DiscordChatExporter.Core.Discord.Data;
@@ -24,13 +26,53 @@ internal class PlainTextMessageWriter(Stream stream, ExportContext context)
 
     private async ValueTask WriteMessageHeaderAsync(Message message)
     {
-        // Timestamp & author
-        await _writer.WriteAsync($"[{Context.FormatDate(message.Timestamp)}]");
-        await _writer.WriteAsync($" {message.Author.FullName}");
+        // ID
+        await _writer.WriteAsync($"{message.Id} | ");
+
+        // Author
+        if (message.IsSystemNotification)
+        {
+            await _writer.WriteAsync($"SYSTEM/{message.Author.FullName}:");
+        }
+        else
+        {
+            await _writer.WriteAsync($"{message.Author.FullName}:");
+        }
+        await _writer.WriteAsync(" ");
+
+        // Timestamp
+        await _writer.WriteAsync($"[{Context.FormatDate(message.Timestamp)}");
+
+        // Edited Timestamp
+        if (message.EditedTimestamp.HasValue)
+        {
+            await _writer.WriteAsync(
+                $" / edited {Context.FormatDate(message.EditedTimestamp.GetValueOrDefault())}"
+            );
+        }
+
+        // End Timestamp
+        await _writer.WriteAsync("] ");
+
+        // Tags
+        List<string> tags = new();
 
         // Whether the message is pinned
         if (message.IsPinned)
-            await _writer.WriteAsync(" (pinned)");
+            tags.Add("pinned");
+
+        // Whether the message is a reply
+        if (message.Kind == MessageKind.Reply)
+            if (message.Reference is not null)
+                tags.Add($"replying: {message.Reference.MessageId}");
+            else
+                tags.Add("replying: unknown");
+
+        if (tags.Count > 0)
+        {
+            await _writer.WriteAsync("(");
+            await _writer.WriteAsync(string.Join(", ", tags) + ")");
+        }
 
         await _writer.WriteLineAsync();
     }
@@ -183,10 +225,9 @@ internal class PlainTextMessageWriter(Stream stream, ExportContext context)
             }
 
             await _writer.WriteAsync(reaction.Emoji.Name);
-
             if (reaction.Count > 1)
             {
-                await _writer.WriteAsync($" ({reaction.Count})");
+                await _writer.WriteAsync($"{reaction.Count}");
             }
         }
 
@@ -197,7 +238,18 @@ internal class PlainTextMessageWriter(Stream stream, ExportContext context)
         CancellationToken cancellationToken = default
     )
     {
+        DateTime d = DateTime.Now;
+        TimeZoneInfo tz = TimeZoneInfo.Local;
+
         await _writer.WriteLineAsync(new string('=', 62));
+        await _writer.WriteLineAsync(
+            $"Exported with fez's DiscordChatExporter fork v{Assembly.GetExecutingAssembly().GetName().Version}"
+        );
+        await _writer.WriteLineAsync($"On {d}");
+        await _writer.WriteLineAsync(
+            $"In Timezone: {(tz.IsDaylightSavingTime(d) ? tz.DaylightName : tz.StandardName)} / UTC {tz.GetUtcOffset(d)}"
+        );
+        await _writer.WriteLineAsync("");
         await _writer.WriteLineAsync($"Guild: {Context.Request.Guild.Name}");
         await _writer.WriteLineAsync($"Channel: {Context.Request.Channel.GetHierarchicalName()}");
 
@@ -238,15 +290,15 @@ internal class PlainTextMessageWriter(Stream stream, ExportContext context)
         if (message.IsSystemNotification)
         {
             await _writer.WriteLineAsync(message.GetFallbackContent());
+            await _writer.WriteLineAsync();
         }
         else
         {
             await _writer.WriteLineAsync(
                 await FormatMarkdownAsync(message.Content, cancellationToken)
             );
+            await _writer.WriteLineAsync();
         }
-
-        await _writer.WriteLineAsync();
 
         // Attachments, embeds, reactions, etc.
         await WriteAttachmentsAsync(message.Attachments, cancellationToken);
@@ -254,16 +306,13 @@ internal class PlainTextMessageWriter(Stream stream, ExportContext context)
         await WriteStickersAsync(message.Stickers, cancellationToken);
         await WriteReactionsAsync(message.Reactions, cancellationToken);
 
-        await _writer.WriteLineAsync();
-    }
-
-    public override async ValueTask WritePostambleAsync(
-        CancellationToken cancellationToken = default
-    )
-    {
-        await _writer.WriteLineAsync(new string('=', 62));
-        await _writer.WriteLineAsync($"Exported {MessagesWritten:N0} message(s)");
-        await _writer.WriteLineAsync(new string('=', 62));
+        if (
+            message.Attachments != null
+            || message.Embeds != null
+            || message.Stickers != null
+            || message.Reactions != null
+        )
+            await _writer.WriteLineAsync();
     }
 
     public override async ValueTask DisposeAsync()

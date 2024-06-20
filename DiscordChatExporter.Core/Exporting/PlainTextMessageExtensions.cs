@@ -23,13 +23,16 @@ internal static class PlainTextMessageExtensions
                     : "Removed a recipient.",
 
             MessageKind.Call
-                => $"Started a call that lasted {
-                message
+                => $"Started a call that lasted {(message
                     .CallEndedTimestamp?
                     .Pipe(t => t - message.Timestamp)
                     .Pipe(t => t.TotalMinutes)
-                    .ToString("n0", CultureInfo.InvariantCulture) ?? "0"
-            } minutes.",
+                    .ToString("n", CultureInfo.InvariantCulture) + " minutes" ?? "an unknown length") + 
+                    (
+                        message.CallParticipants?.Count>1 ?
+                        $" with {string.Join(", ", message.CallParticipants)}."
+                        : "."
+                    )}",
 
             MessageKind.ChannelNameChange
                 => !string.IsNullOrWhiteSpace(message.Content)
@@ -37,7 +40,8 @@ internal static class PlainTextMessageExtensions
                     : "Changed the channel name.",
 
             MessageKind.ChannelIconChange => "Changed the channel icon.",
-            MessageKind.ChannelPinnedMessage => "Pinned a message.",
+            MessageKind.ChannelPinnedMessage
+                => $"Pinned {(message.Reference != null ? message.Reference.MessageId : "BROKEN ID")}",
             MessageKind.ThreadCreated => "Started a thread.",
             MessageKind.GuildMemberJoin => "Joined the server.",
 

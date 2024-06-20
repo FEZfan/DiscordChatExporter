@@ -18,6 +18,7 @@ public partial record Message(
     DateTimeOffset Timestamp,
     DateTimeOffset? EditedTimestamp,
     DateTimeOffset? CallEndedTimestamp,
+    IReadOnlyList<string>? CallParticipants,
     bool IsPinned,
     string Content,
     IReadOnlyList<Attachment> Attachments,
@@ -132,9 +133,16 @@ public partial record Message
         var author = json.GetProperty("author").Pipe(User.Parse);
         var timestamp = json.GetProperty("timestamp").GetDateTimeOffset();
         var editedTimestamp = json.GetPropertyOrNull("edited_timestamp")?.GetDateTimeOffsetOrNull();
+
         var callEndedTimestamp = json.GetPropertyOrNull("call")
             ?.GetPropertyOrNull("ended_timestamp")
             ?.GetDateTimeOffsetOrNull();
+
+        var callParticipants = json.GetPropertyOrNull("call")
+            ?.GetPropertyOrNull("participants")
+            ?.EnumerateArrayOrNull()
+            ?.Select(p => p.ToString())
+            ?.ToArray();
 
         var isPinned = json.GetPropertyOrNull("pinned")?.GetBooleanOrNull() ?? false;
         var content = json.GetPropertyOrNull("content")?.GetStringOrNull() ?? "";
@@ -179,6 +187,7 @@ public partial record Message
             timestamp,
             editedTimestamp,
             callEndedTimestamp,
+            callParticipants,
             isPinned,
             content,
             attachments,

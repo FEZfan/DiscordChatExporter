@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using DiscordChatExporter.Core.Discord;
 using DiscordChatExporter.Core.Discord.Data;
 using DiscordChatExporter.Core.Utils.Extensions;
+using Polly;
 
 namespace DiscordChatExporter.Core.Exporting;
 
@@ -28,8 +29,10 @@ internal class ExportContext(DiscordClient discord, ExportRequest request)
     public DateTimeOffset NormalizeDate(DateTimeOffset instant) =>
         Request.IsUtcNormalizationEnabled ? instant.ToUniversalTime() : instant.ToLocalTime();
 
-    public string FormatDate(DateTimeOffset instant, string format = "g") =>
-        NormalizeDate(instant).ToString(format, Request.CultureInfo);
+    public string FormatDate(DateTimeOffset instant, string? format = null) =>
+        format != null
+            ? NormalizeDate(instant).ToString(format, Request.CultureInfo)
+            : string.Format("{0:dd/MM/yyyy HH:mm:ss.fff}", NormalizeDate(instant));
 
     public async ValueTask PopulateChannelsAndRolesAsync(
         CancellationToken cancellationToken = default
