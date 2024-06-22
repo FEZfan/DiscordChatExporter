@@ -42,25 +42,6 @@ internal class JsonMessageWriter(Stream stream, ExportContext context)
         _writer.WriteStartObject();
 
         _writer.WriteString("id", user.Id.ToString());
-        _writer.WriteString("name", user.Name);
-        _writer.WriteString("discriminator", user.DiscriminatorFormatted);
-        _writer.WriteString(
-            "nickname",
-            Context.TryGetMember(user.Id)?.DisplayName ?? user.DisplayName
-        );
-        _writer.WriteString("color", Context.TryGetUserColor(user.Id)?.ToHex());
-        _writer.WriteBoolean("isBot", user.IsBot);
-
-        _writer.WritePropertyName("roles");
-        await WriteRolesAsync(Context.GetUserRoles(user.Id), cancellationToken);
-
-        _writer.WriteString(
-            "avatarUrl",
-            await Context.ResolveAssetUrlAsync(
-                Context.TryGetMember(user.Id)?.AvatarUrl ?? user.AvatarUrl,
-                cancellationToken
-            )
-        );
 
         _writer.WriteEndObject();
         await _writer.FlushAsync(cancellationToken);
@@ -299,14 +280,7 @@ internal class JsonMessageWriter(Stream stream, ExportContext context)
         // Channel
         _writer.WriteStartObject("channel");
         _writer.WriteString("id", Context.Request.Channel.Id.ToString());
-        _writer.WriteString("type", Context.Request.Channel.Kind.ToString());
-
-        // Original schema did not account for threads, so 'category' actually refers to the parent channel
-        _writer.WriteString("categoryId", Context.Request.Channel.Parent?.Id.ToString());
-        _writer.WriteString("category", Context.Request.Channel.Parent?.Name);
-
         _writer.WriteString("name", Context.Request.Channel.Name);
-        _writer.WriteString("topic", Context.Request.Channel.Topic);
 
         if (!string.IsNullOrWhiteSpace(Context.Request.Channel.IconUrl))
         {
@@ -348,15 +322,31 @@ internal class JsonMessageWriter(Stream stream, ExportContext context)
         _writer.WriteString("id", message.Id.ToString());
         _writer.WriteString("type", message.Kind.ToString());
         _writer.WriteString("timestamp", Context.NormalizeDate(message.Timestamp));
-        _writer.WriteString(
-            "timestampEdited",
-            message.EditedTimestamp?.Pipe(Context.NormalizeDate)
-        );
-        _writer.WriteString(
-            "callEndedTimestamp",
-            message.CallEndedTimestamp?.Pipe(Context.NormalizeDate)
-        );
-        _writer.WriteBoolean("isPinned", message.IsPinned);
+
+        if (message.EditedTimestamp.HasValue)
+            _writer.WriteString(
+                "timestampEdited",
+                message.EditedTimestamp?.Pipe(Context.NormalizeDate)
+            );
+
+        if (message.CallEndedTimestamp.HasValue)
+            _writer.WriteString(
+                "callEndedTimestamp",
+                message.CallEndedTimestamp?.Pipe(Context.NormalizeDate)
+            );
+
+        if (message.CallParticipants != null)
+        {
+            _writer.WriteStartArray("callParticipants");
+            foreach (string p in message.CallParticipants)
+            {
+                _writer.WriteStringValue(p);
+            }
+            _writer.WriteEndArray();
+        }
+
+        if (message.IsPinned)
+            _writer.WriteBoolean("isPinned", message.IsPinned);
 
         // Content
         if (message.IsSystemNotification)
@@ -372,135 +362,126 @@ internal class JsonMessageWriter(Stream stream, ExportContext context)
         }
 
         // Author
-        _writer.WritePropertyName("author");
-        await WriteUserAsync(message.Author, cancellationToken);
+        if (message.IsSystemNotification)
+        {
+            _writer.WriteString("author", $"SYSTEM/{message.Author.Id.ToString()}");
+        }
+        else
+        {
+            _writer.WriteString("author", message.Author.Id.ToString());
+        }
 
         // Attachments
-        _writer.WriteStartArray("attachments");
-
-        foreach (var attachment in message.Attachments)
+        if (message.Attachments.Count > 0)
         {
-            _writer.WriteStartObject();
+            _writer.WriteStartArray("attachments");
 
-            _writer.WriteString("id", attachment.Id.ToString());
-            _writer.WriteString(
-                "url",
-                await Context.ResolveAssetUrlAsync(attachment.Url, cancellationToken)
-            );
-            _writer.WriteString("fileName", attachment.FileName);
-            _writer.WriteNumber("fileSizeBytes", attachment.FileSize.TotalBytes);
-
-            _writer.WriteEndObject();
-        }
-
-        _writer.WriteEndArray();
-
-        // Embeds
-        _writer.WriteStartArray("embeds");
-
-        foreach (var embed in message.Embeds)
-            await WriteEmbedAsync(embed, cancellationToken);
-
-        _writer.WriteEndArray();
-
-        // Stickers
-        _writer.WriteStartArray("stickers");
-
-        foreach (var sticker in message.Stickers)
-        {
-            _writer.WriteStartObject();
-
-            _writer.WriteString("id", sticker.Id.ToString());
-            _writer.WriteString("name", sticker.Name);
-            _writer.WriteString("format", sticker.Format.ToString());
-            _writer.WriteString(
-                "sourceUrl",
-                await Context.ResolveAssetUrlAsync(sticker.SourceUrl, cancellationToken)
-            );
-
-            _writer.WriteEndObject();
-        }
-
-        _writer.WriteEndArray();
-
-        // Reactions
-        _writer.WriteStartArray("reactions");
-
-        foreach (var reaction in message.Reactions)
-        {
-            _writer.WriteStartObject();
-
-            // Emoji
-            _writer.WriteStartObject("emoji");
-            _writer.WriteString("id", reaction.Emoji.Id.ToString());
-            _writer.WriteString("name", reaction.Emoji.Name);
-            _writer.WriteString("code", reaction.Emoji.Code);
-            _writer.WriteBoolean("isAnimated", reaction.Emoji.IsAnimated);
-            _writer.WriteString(
-                "imageUrl",
-                await Context.ResolveAssetUrlAsync(reaction.Emoji.ImageUrl, cancellationToken)
-            );
-            _writer.WriteEndObject();
-
-            _writer.WriteNumber("count", reaction.Count);
-
-            _writer.WriteStartArray("users");
-            await foreach (
-                var user in Context.Discord.GetMessageReactionsAsync(
-                    Context.Request.Channel.Id,
-                    message.Id,
-                    reaction.Emoji,
-                    cancellationToken
-                )
-            )
+            foreach (var attachment in message.Attachments)
             {
                 _writer.WriteStartObject();
 
-                // Write limited user information without color and roles,
-                // so we can avoid fetching guild member information for each user.
-                _writer.WriteString("id", user.Id.ToString());
-                _writer.WriteString("name", user.Name);
-                _writer.WriteString("discriminator", user.DiscriminatorFormatted);
-                _writer.WriteString(
-                    "nickname",
-                    Context.TryGetMember(user.Id)?.DisplayName ?? user.DisplayName
-                );
-                _writer.WriteBoolean("isBot", user.IsBot);
+                _writer.WriteString("id", attachment.Id.ToString());
+                _writer.WriteString("fileName", attachment.FileName);
+                _writer.WriteNumber("fileSizeBytes", attachment.FileSize.TotalBytes);
 
+                _writer.WriteEndObject();
+            }
+
+            _writer.WriteEndArray();
+        }
+
+        if (message.Embeds.Count > 0)
+        {
+            // Embeds
+            _writer.WriteStartArray("embeds");
+
+            foreach (var embed in message.Embeds)
+                await WriteEmbedAsync(embed, cancellationToken);
+
+            _writer.WriteEndArray();
+        }
+
+        if (message.Stickers.Count > 0)
+        {
+            // Stickers
+            _writer.WriteStartArray("stickers");
+
+            foreach (var sticker in message.Stickers)
+            {
+                _writer.WriteStartObject();
+
+                _writer.WriteString("id", sticker.Id.ToString());
+                _writer.WriteString("name", sticker.Name);
+                _writer.WriteString("format", sticker.Format.ToString());
                 _writer.WriteString(
-                    "avatarUrl",
-                    await Context.ResolveAssetUrlAsync(
-                        Context.TryGetMember(user.Id)?.AvatarUrl ?? user.AvatarUrl,
-                        cancellationToken
-                    )
+                    "sourceUrl",
+                    await Context.ResolveAssetUrlAsync(sticker.SourceUrl, cancellationToken)
                 );
 
                 _writer.WriteEndObject();
             }
 
             _writer.WriteEndArray();
+        }
+        if (message.Reactions.Count > 0)
+        {
+            // Reactions
+            _writer.WriteStartArray("reactions");
 
-            _writer.WriteEndObject();
+            foreach (var reaction in message.Reactions)
+            {
+                _writer.WriteStartObject();
+
+                // Emoji
+                _writer.WriteStartObject("emoji");
+
+                if (reaction.Emoji.Id != null)
+                {
+                    _writer.WriteString("id", reaction.Emoji.Id.ToString());
+                }
+                else
+                {
+                    _writer.WriteString("code", reaction.Emoji.Code);
+                }
+
+                _writer.WriteEndObject();
+
+                _writer.WriteStartArray("users");
+                await foreach (
+                    var user in Context.Discord.GetMessageReactionsAsync(
+                        Context.Request.Channel.Id,
+                        message.Id,
+                        reaction.Emoji,
+                        cancellationToken
+                    )
+                )
+                {
+                    _writer.WriteStringValue(user.Id.ToString());
+                }
+
+                _writer.WriteEndArray();
+
+                _writer.WriteEndObject();
+            }
+
+            _writer.WriteEndArray();
         }
 
-        _writer.WriteEndArray();
-
         // Mentions
-        _writer.WriteStartArray("mentions");
+        if (message.MentionedUsers.Count > 0)
+        {
+            _writer.WriteStartArray("mentions");
 
-        foreach (var user in message.MentionedUsers)
-            await WriteUserAsync(user, cancellationToken);
+            foreach (var user in message.MentionedUsers)
+                _writer.WriteStringValue(user.Id.ToString());
 
-        _writer.WriteEndArray();
+            _writer.WriteEndArray();
+        }
 
         // Message reference
         if (message.Reference is not null)
         {
-            _writer.WriteStartObject("reference");
-            _writer.WriteString("messageId", message.Reference.MessageId?.ToString());
-            _writer.WriteString("channelId", message.Reference.ChannelId?.ToString());
-            _writer.WriteString("guildId", message.Reference.GuildId?.ToString());
-            _writer.WriteEndObject();
+            _writer.WriteString("reference", message.Reference.MessageId?.ToString());
         }
 
         // Interaction
